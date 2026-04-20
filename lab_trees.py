@@ -50,7 +50,16 @@ def load_and_split(filepath="data/telecom_churn.csv", random_state=42):
     """
     # TODO: Load the CSV, select NUMERIC_FEATURES into X, use `churned` as y,
     #       split with test_size=0.2 and stratify=y.
-    pass
+     
+    df = pd.read_csv(filepath)
+     
+    X = df[NUMERIC_FEATURES]
+    y = df["churned"]
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=random_state, stratify=y
+    )
+    return (X_train, X_test, y_train, y_test)
 
 
 def build_decision_tree(X_train, y_train, max_depth=5, random_state=42):
