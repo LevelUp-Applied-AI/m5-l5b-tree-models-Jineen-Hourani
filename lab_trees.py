@@ -48,9 +48,18 @@ def load_and_split(filepath="data/telecom_churn.csv", random_state=42):
         Tuple (X_train, X_test, y_train, y_test) where X contains only
         NUMERIC_FEATURES and y is the `churned` column.
     """
-    # TODO: Load the CSV, select NUMERIC_FEATURES into X, use `churned` as y,
+    #  Load the CSV, select NUMERIC_FEATURES into X, use `churned` as y,
     #       split with test_size=0.2 and stratify=y.
-    pass
+     
+    df = pd.read_csv(filepath)
+     
+    X = df[NUMERIC_FEATURES]
+    y = df["churned"]
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=random_state, stratify=y
+    )
+    return (X_train, X_test, y_train, y_test)
 
 
 def build_decision_tree(X_train, y_train, max_depth=5, random_state=42):
@@ -63,8 +72,10 @@ def build_decision_tree(X_train, y_train, max_depth=5, random_state=42):
     Returns:
         Fitted DecisionTreeClassifier.
     """
-    # TODO: Fit a DecisionTreeClassifier with the given max_depth and seed.
-    pass
+    #  Fit a DecisionTreeClassifier with the given max_depth and seed.
+    model = DecisionTreeClassifier(max_depth=max_depth, random_state=random_state)
+    model.fit(X_train, y_train)
+    return model
 
 
 def compute_ece(y_true, y_prob, n_bins=10):
@@ -85,10 +96,34 @@ def compute_ece(y_true, y_prob, n_bins=10):
     Returns:
         ECE as a float in [0, 1].
     """
-    # TODO: Sort indices by y_prob ascending; use np.array_split to make
+    #   Sort indices by y_prob ascending; use np.array_split to make
     #       n_bins equal-size bins; for each bin compute
     #       (bin_size / total) * abs(mean_prob - fraction_positive); sum.
-    pass
+    n = len(y_true)
+    # Sort samples by predicted probability
+    order = np.argsort(y_prob)
+    y_true_sorted = np.array(y_true)[order]
+    y_prob_sorted = np.array(y_prob)[order]
+    
+    # Split into n_bins equal-size chunks
+    indices = np.arange(n)
+    bin_indices = np.array_split(indices, n_bins)
+    
+    ece = 0.0
+    for bin_idx in bin_indices:
+        if len(bin_idx) == 0:
+            continue
+        
+        # Mean predicted probability in this bin
+        bin_mean_prob = np.mean(y_prob_sorted[bin_idx])
+        # Actual fraction of positives in this bin
+        bin_fraction_pos = np.mean(y_true_sorted[bin_idx])
+        
+        # Weighted difference
+        bin_size = len(bin_idx)
+        ece += (bin_size / n) * abs(bin_mean_prob - bin_fraction_pos)
+        
+    return ece
 
 
 def compare_dt_calibration(X_train, X_test, y_train, y_test):
@@ -101,10 +136,20 @@ def compare_dt_calibration(X_train, X_test, y_train, y_test):
     Returns:
         Dict with keys 'ece_unbounded' and 'ece_depth_5' (floats in [0, 1]).
     """
-    # TODO: Fit a DecisionTreeClassifier with max_depth=None; compute ECE on
+    #  Fit a DecisionTreeClassifier with max_depth=None; compute ECE on
     #       its test-set predict_proba. Fit another with max_depth=5; same.
     #       Return both as a dict.
-    pass
+    # Unbounded tree
+    dt_unbounded = build_decision_tree(X_train, y_train, max_depth=None)
+    y_prob_unbounded = dt_unbounded.predict_proba(X_test)[:, 1]
+    ece_unbounded = compute_ece(y_test, y_prob_unbounded)
+    
+    # Depth-5 tree
+    dt_5 = build_decision_tree(X_train, y_train, max_depth=5)
+    y_prob_5 = dt_5.predict_proba(X_test)[:, 1]
+    ece_depth_5 = compute_ece(y_test, y_prob_5)
+    
+    return {"ece_unbounded": ece_unbounded, "ece_depth_5": ece_depth_5}
 
 
 def build_random_forest(X_train, y_train, n_estimators=100, max_depth=10,
@@ -119,15 +164,26 @@ def build_random_forest(X_train, y_train, n_estimators=100, max_depth=10,
     Returns:
         Fitted RandomForestClassifier.
     """
-    # TODO: Fit a RandomForestClassifier with the given parameters.
-    pass
+    #  Fit a RandomForestClassifier with the given parameters.
+    model = RandomForestClassifier(
+        n_estimators=n_estimators, 
+        max_depth=max_depth, 
+        class_weight=class_weight, 
+        random_state=random_state
+    )
+    model.fit(X_train, y_train)
+    return model
 
 
 def get_feature_importances(model, feature_names):
     """Return a dict of feature_name -> importance, sorted descending."""
-    # TODO: Zip feature_names with model.feature_importances_, sort by
+    #  Zip feature_names with model.feature_importances_, sort by
     #       importance descending, return as a regular dict.
-    pass
+    importances = model.feature_importances_
+    feat_imp = dict(zip(feature_names, importances))
+    # Sort descending
+    sorted_imp = dict(sorted(feat_imp.items(), key=lambda item: item[1], reverse=True))
+    return sorted_imp
 
 
 def evaluate_recall_at_threshold(model, X_test, y_test, threshold=0.5):
@@ -140,9 +196,11 @@ def evaluate_recall_at_threshold(model, X_test, y_test, threshold=0.5):
     Returns:
         Recall as a float in [0, 1].
     """
-    # TODO: Get predict_proba(X_test)[:, 1], threshold it, compute
+    #  Get predict_proba(X_test)[:, 1], threshold it, compute
     #       recall_score(y_test, y_pred, zero_division=0).
-    pass
+    y_probs = model.predict_proba(X_test)[:, 1]
+    y_pred = (y_probs >= threshold).astype(int)
+    return recall_score(y_test, y_pred, zero_division=0)
 
 
 def compute_pr_auc(model, X_test, y_test):
@@ -157,8 +215,9 @@ def compute_pr_auc(model, X_test, y_test):
     Returns:
         Float in [0, 1].
     """
-    # TODO: Get predict_proba(X_test)[:, 1] and call average_precision_score.
-    pass
+    #  Get predict_proba(X_test)[:, 1] and call average_precision_score.
+    y_probs = model.predict_proba(X_test)[:, 1]
+    return average_precision_score(y_test, y_probs)
 
 
 def plot_pr_curves(rf_default, rf_balanced, X_test, y_test, output_path):
@@ -167,17 +226,27 @@ def plot_pr_curves(rf_default, rf_balanced, X_test, y_test, output_path):
     Args:
         output_path: Destination path (e.g., 'results/pr_curves.png').
     """
-    # TODO: Create a matplotlib figure. Use PrecisionRecallDisplay.from_estimator
+    #  Create a matplotlib figure. Use PrecisionRecallDisplay.from_estimator
     #       for each model on the same axes. Title the plot. Save to
     #       output_path with plt.savefig. Close the figure.
-    pass
+    fig, ax = plt.subplots(figsize=(8, 6))
+    PrecisionRecallDisplay.from_estimator(rf_default, X_test, y_test, ax=ax, name="Default RF")
+    PrecisionRecallDisplay.from_estimator(rf_balanced, X_test, y_test, ax=ax, name="Balanced RF")
+    ax.set_title("Precision-Recall Curves Comparison")
+    plt.savefig(output_path)
+    plt.close()
 
 
 def plot_calibration_curves(rf_default, rf_balanced, X_test, y_test, output_path):
     """Plot calibration curves for both RF models and save as PNG."""
-    # TODO: Create a figure. Use CalibrationDisplay.from_estimator for each
+    #  Create a figure. Use CalibrationDisplay.from_estimator for each
     #       model on the same axes. Save to output_path. Close the figure.
-    pass
+    fig, ax = plt.subplots(figsize=(8, 6))
+    CalibrationDisplay.from_estimator(rf_default, X_test, y_test, n_bins=10, ax=ax, name="Default RF")
+    CalibrationDisplay.from_estimator(rf_balanced, X_test, y_test, n_bins=10, ax=ax, name="Balanced RF")
+    ax.set_title("Calibration Curves Comparison")
+    plt.savefig(output_path)
+    plt.close()
 
 
 def build_logistic_regression(X_train_scaled, y_train, random_state=42):
@@ -191,8 +260,10 @@ def build_logistic_regression(X_train_scaled, y_train, random_state=42):
     Returns:
         Fitted LogisticRegression(max_iter=1000).
     """
-    # TODO: Fit a LogisticRegression(max_iter=1000, random_state=random_state).
-    pass
+    #  Fit a LogisticRegression(max_iter=1000, random_state=random_state).
+    model = LogisticRegression(max_iter=1000, random_state=random_state)
+    model.fit(X_train_scaled, y_train)
+    return model
 
 
 def find_tree_vs_linear_disagreement(rf_model, lr_model, X_test_raw,
@@ -225,18 +296,118 @@ def find_tree_vs_linear_disagreement(rf_model, lr_model, X_test_raw,
           - prob_diff (float): |rf_proba - lr_proba|
           - true_label (int): 0 or 1
     """
-    # TODO: Compute predict_proba(:, 1) for both models on their respective
+    #  Compute predict_proba(:, 1) for both models on their respective
     #       X_test inputs. Take absolute difference. Find the sample index
     #       with the MAXIMUM difference (must be >= min_diff). Return the
     #       dict with all six fields populated.
-    pass
+    rf_probs = rf_model.predict_proba(X_test_raw)[:, 1]
+    lr_probs = lr_model.predict_proba(X_test_scaled)[:, 1]
+    
+    diffs = np.abs(rf_probs - lr_probs)
+    max_idx = np.argmax(diffs)
+    max_diff = diffs[max_idx]
+    
+    if max_diff < min_diff:
+        return None
+        
+    # Get feature values as a dict
+    sample_raw = X_test_raw.iloc[max_idx]
+    feature_values = dict(zip(feature_names, sample_raw))
+    
+    return {
+        "sample_idx": int(X_test_raw.index[max_idx]),
+        "feature_values": feature_values,
+        "rf_proba": float(rf_probs[max_idx]),
+        "lr_proba": float(lr_probs[max_idx]),
+        "prob_diff": float(max_diff),
+        "true_label": int(y_test.iloc[max_idx])
+    }
 
+
+
+def run_tier1_threshold_tuning(model, X_test, y_test, output_path):
+    """Sweeps thresholds to find the optimal F1-score and operating point."""
+    thresholds = np.arange(0.1, 0.95, 0.05)
+    metrics = {"precision": [], "recall": [], "f1": []}
+    
+    y_probs = model.predict_proba(X_test)[:, 1]
+    
+    from sklearn.metrics import precision_score, f1_score
+    
+    for t in thresholds:
+        y_pred = (y_probs >= t).astype(int)
+        metrics["precision"].append(precision_score(y_test, y_pred, zero_division=0))
+        metrics["recall"].append(recall_score(y_test, y_pred, zero_division=0))
+        metrics["f1"].append(f1_score(y_test, y_pred, zero_division=0))
+        
+    plt.figure(figsize=(10, 6))
+    plt.plot(thresholds, metrics["precision"], label='Precision', linestyle='--')
+    plt.plot(thresholds, metrics["recall"], label='Recall', linestyle='--')
+    plt.plot(thresholds, metrics["f1"], label='F1-Score', linewidth=3, color='black')
+    
+    plt.title("Threshold Sweep for Balanced Random Forest")
+    plt.xlabel("Decision Threshold")
+    plt.ylabel("Score")
+    plt.legend()
+    plt.grid(alpha=0.3)
+    plt.savefig(output_path)
+    plt.close()
+    
+    best_idx = np.argmax(metrics["f1"])
+    return thresholds[best_idx], metrics["f1"][best_idx]
+
+
+def run_tier2_permutation_importance(model, X_test, y_test, feature_names, output_path):
+    """Compares MDI importance with Permutation importance to find biases."""
+    from sklearn.inspection import permutation_importance
+    
+    # Calculate permutation importance
+    result = permutation_importance(model, X_test, y_test, n_repeats=10, random_state=42)
+    
+    # Get MDI importance from the model
+    mdi_importances = model.feature_importances_
+    
+    # Sort by permutation importance
+    perm_sorted_idx = result.importances_mean.argsort()
+    
+    tree_indices = np.arange(0, len(feature_names)) + 0.5
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+    
+    ax1.barh(tree_indices, mdi_importances[perm_sorted_idx], height=0.7)
+    ax1.set_yticks(tree_indices)
+    ax1.set_yticklabels(np.array(feature_names)[perm_sorted_idx])
+    ax1.set_title("MDI Importance (Gini)")
+    
+    ax2.boxplot(result.importances[perm_sorted_idx].T, vert=False, 
+                labels=np.array(feature_names)[perm_sorted_idx])
+    ax2.set_title("Permutation Importance (Test Set)")
+    
+    fig.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
+
+
+def run_tier3_simple_ensemble(rf_model, lr_model, dt_model, X_test, X_test_scaled):
+    """Tier 3: Simple Functional Ensemble without using Classes."""
+    # 1. Get probabilities from each model
+    p1 = rf_model.predict_proba(X_test)[:, 1]
+    p2 = lr_model.predict_proba(X_test_scaled)[:, 1]
+    p3 = dt_model.predict_proba(X_test)[:, 1]
+    
+    # 2. Average them
+    ensemble_probs = (p1 + p2 + p3) / 3
+    
+    # 3. Convert to binary predictions (at 0.5 threshold)
+    ensemble_preds = (ensemble_probs >= 0.5).astype(int)
+    
+    return ensemble_preds
 
 def main():
-    """Orchestrate all 7 lab tasks. Run with: python lab_trees.py"""
+    """Orchestrate all lab tasks and challenges. Run with: python lab_trees.py"""
     os.makedirs("results", exist_ok=True)
 
-    # Task 1: Load + split
+    # --- Task 1: Load + split ---
     result = load_and_split()
     if not result:
         print("load_and_split not implemented. Exiting.")
@@ -244,16 +415,17 @@ def main():
     X_train, X_test, y_train, y_test = result
     print(f"Train: {len(X_train)}  Test: {len(X_test)}  Churn rate: {y_train.mean():.2%}")
 
-    # Task 2: Decision tree + calibration comparison
+    # --- Task 2: Decision tree + calibration comparison ---
     dt = build_decision_tree(X_train, y_train)
     if dt is not None:
         print(f"\n--- Decision Tree (max_depth=5) ---")
         print(classification_report(y_test, dt.predict(X_test), zero_division=0))
-        # Plot tree (first 3 levels)
-        plt.figure(figsize=(14, 8))
-        plot_tree(dt, feature_names=NUMERIC_FEATURES, max_depth=3,
-                  filled=True, fontsize=8)
-        plt.savefig("results/decision_tree.png", dpi=100, bbox_inches="tight")
+        
+        # Plotting the tree with higher resolution and depth
+        plt.figure(figsize=(30, 15))
+        plot_tree(dt, feature_names=NUMERIC_FEATURES, max_depth=5,
+                  filled=True, fontsize=10, precision=2, rounded=True)
+        plt.savefig("results/decision_tree.png", dpi=300, bbox_inches="tight")
         plt.close()
 
     cal = compare_dt_calibration(X_train, X_test, y_train, y_test)
@@ -261,7 +433,7 @@ def main():
         print(f"DT ECE (max_depth=None): {cal['ece_unbounded']:.3f}")
         print(f"DT ECE (max_depth=5):    {cal['ece_depth_5']:.3f}")
 
-    # Task 3: Random forest + feature importances
+    # --- Task 3: Random forest + feature importances ---
     rf = build_random_forest(X_train, y_train)
     if rf is not None:
         print(f"\n--- Random Forest (max_depth=10) ---")
@@ -271,7 +443,7 @@ def main():
             for name, value in imp.items():
                 print(f"  {name:<22s} {value:.3f}")
 
-    # Task 4: Balanced RF + recall@0.5 comparison + PR-AUC
+    # --- Task 4: Balanced RF + recall@0.5 comparison + PR-AUC ---
     rf_bal = build_random_forest(X_train, y_train, class_weight="balanced")
     if rf is not None and rf_bal is not None:
         r_def = evaluate_recall_at_threshold(rf, X_test, y_test, threshold=0.5)
@@ -285,14 +457,12 @@ def main():
         print(f"\n--- PR-AUC (threshold-independent ranking quality) ---")
         print(f"  RF default:  {auc_def:.3f}")
         print(f"  RF balanced: {auc_bal:.3f}")
-        print("Note: class_weight='balanced' shifts the operating point at a fixed "
-              "threshold; it does not improve the underlying ranking (PR-AUC).")
 
-        # Task 5: PR curves + calibration curves
+        # --- Task 5: PR curves + calibration curves ---
         plot_pr_curves(rf, rf_bal, X_test, y_test, "results/pr_curves.png")
         plot_calibration_curves(rf, rf_bal, X_test, y_test, "results/calibration_curves.png")
 
-    # Task 6: Tree-vs-linear disagreement
+    # --- Task 6: Tree-vs-linear disagreement ---
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
@@ -307,6 +477,23 @@ def main():
             print(f"  |diff| = {d['prob_diff']:.3f}   true label = {d['true_label']}")
             print(f"  Feature values: {d['feature_values']}")
 
+    # --- Challenges (Tiers 1, 2, 3) ---
+    print("\n" + "="*40)
+    print("      RUNNING LAB CHALLENGES")
+    print("="*40)
+
+    # Tier 1: Threshold Tuning
+    best_t, best_f1 = run_tier1_threshold_tuning(rf_bal, X_test, y_test, "results/threshold_sweep.png")
+    print(f"Tier 1: Best F1 Score {best_f1:.3f} found at threshold {best_t:.2f}")
+
+    # Tier 2: Permutation Importance
+    run_tier2_permutation_importance(rf_bal, X_test, y_test, NUMERIC_FEATURES, "results/permutation_vs_mdi.png")
+    print("Tier 2: Permutation vs MDI comparison saved to results/")
+
+    # Tier 3: Functional Ensemble
+    ens_preds = run_tier3_simple_ensemble(rf_bal, lr, dt, X_test, X_test_scaled)
+    print("\nTier 3: Simple Ensemble (RF + LR + DT) Report:")
+    print(classification_report(y_test, ens_preds, zero_division=0))
 
 if __name__ == "__main__":
     main()
