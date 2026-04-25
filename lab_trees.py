@@ -324,11 +324,90 @@ def find_tree_vs_linear_disagreement(rf_model, lr_model, X_test_raw,
     }
 
 
+
+def run_tier1_threshold_tuning(model, X_test, y_test, output_path):
+    """Sweeps thresholds to find the optimal F1-score and operating point."""
+    thresholds = np.arange(0.1, 0.95, 0.05)
+    metrics = {"precision": [], "recall": [], "f1": []}
+    
+    y_probs = model.predict_proba(X_test)[:, 1]
+    
+    from sklearn.metrics import precision_score, f1_score
+    
+    for t in thresholds:
+        y_pred = (y_probs >= t).astype(int)
+        metrics["precision"].append(precision_score(y_test, y_pred, zero_division=0))
+        metrics["recall"].append(recall_score(y_test, y_pred, zero_division=0))
+        metrics["f1"].append(f1_score(y_test, y_pred, zero_division=0))
+        
+    plt.figure(figsize=(10, 6))
+    plt.plot(thresholds, metrics["precision"], label='Precision', linestyle='--')
+    plt.plot(thresholds, metrics["recall"], label='Recall', linestyle='--')
+    plt.plot(thresholds, metrics["f1"], label='F1-Score', linewidth=3, color='black')
+    
+    plt.title("Threshold Sweep for Balanced Random Forest")
+    plt.xlabel("Decision Threshold")
+    plt.ylabel("Score")
+    plt.legend()
+    plt.grid(alpha=0.3)
+    plt.savefig(output_path)
+    plt.close()
+    
+    best_idx = np.argmax(metrics["f1"])
+    return thresholds[best_idx], metrics["f1"][best_idx]
+
+
+def run_tier2_permutation_importance(model, X_test, y_test, feature_names, output_path):
+    """Compares MDI importance with Permutation importance to find biases."""
+    from sklearn.inspection import permutation_importance
+    
+    # Calculate permutation importance
+    result = permutation_importance(model, X_test, y_test, n_repeats=10, random_state=42)
+    
+    # Get MDI importance from the model
+    mdi_importances = model.feature_importances_
+    
+    # Sort by permutation importance
+    perm_sorted_idx = result.importances_mean.argsort()
+    
+    tree_indices = np.arange(0, len(feature_names)) + 0.5
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+    
+    ax1.barh(tree_indices, mdi_importances[perm_sorted_idx], height=0.7)
+    ax1.set_yticks(tree_indices)
+    ax1.set_yticklabels(np.array(feature_names)[perm_sorted_idx])
+    ax1.set_title("MDI Importance (Gini)")
+    
+    ax2.boxplot(result.importances[perm_sorted_idx].T, vert=False, 
+                labels=np.array(feature_names)[perm_sorted_idx])
+    ax2.set_title("Permutation Importance (Test Set)")
+    
+    fig.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
+
+
+def run_tier3_simple_ensemble(rf_model, lr_model, dt_model, X_test, X_test_scaled):
+    """Tier 3: Simple Functional Ensemble without using Classes."""
+    # 1. Get probabilities from each model
+    p1 = rf_model.predict_proba(X_test)[:, 1]
+    p2 = lr_model.predict_proba(X_test_scaled)[:, 1]
+    p3 = dt_model.predict_proba(X_test)[:, 1]
+    
+    # 2. Average them
+    ensemble_probs = (p1 + p2 + p3) / 3
+    
+    # 3. Convert to binary predictions (at 0.5 threshold)
+    ensemble_preds = (ensemble_probs >= 0.5).astype(int)
+    
+    return ensemble_preds
+
 def main():
-    """Orchestrate all 7 lab tasks. Run with: python lab_trees.py"""
+    """Orchestrate all lab tasks and challenges. Run with: python lab_trees.py"""
     os.makedirs("results", exist_ok=True)
 
-    # Task 1: Load + split
+    # --- Task 1: Load + split ---
     result = load_and_split()
     if not result:
         print("load_and_split not implemented. Exiting.")
@@ -336,16 +415,17 @@ def main():
     X_train, X_test, y_train, y_test = result
     print(f"Train: {len(X_train)}  Test: {len(X_test)}  Churn rate: {y_train.mean():.2%}")
 
-    # Task 2: Decision tree + calibration comparison
+    # --- Task 2: Decision tree + calibration comparison ---
     dt = build_decision_tree(X_train, y_train)
     if dt is not None:
         print(f"\n--- Decision Tree (max_depth=5) ---")
         print(classification_report(y_test, dt.predict(X_test), zero_division=0))
-        # Plot tree (first 3 levels)
-        plt.figure(figsize=(14, 8))
-        plot_tree(dt, feature_names=NUMERIC_FEATURES, max_depth=3,
-                  filled=True, fontsize=8)
-        plt.savefig("results/decision_tree.png", dpi=100, bbox_inches="tight")
+        
+        # Plotting the tree with higher resolution and depth
+        plt.figure(figsize=(30, 15))
+        plot_tree(dt, feature_names=NUMERIC_FEATURES, max_depth=5,
+                  filled=True, fontsize=10, precision=2, rounded=True)
+        plt.savefig("results/decision_tree.png", dpi=300, bbox_inches="tight")
         plt.close()
 
     cal = compare_dt_calibration(X_train, X_test, y_train, y_test)
@@ -353,7 +433,7 @@ def main():
         print(f"DT ECE (max_depth=None): {cal['ece_unbounded']:.3f}")
         print(f"DT ECE (max_depth=5):    {cal['ece_depth_5']:.3f}")
 
-    # Task 3: Random forest + feature importances
+    # --- Task 3: Random forest + feature importances ---
     rf = build_random_forest(X_train, y_train)
     if rf is not None:
         print(f"\n--- Random Forest (max_depth=10) ---")
@@ -363,7 +443,7 @@ def main():
             for name, value in imp.items():
                 print(f"  {name:<22s} {value:.3f}")
 
-    # Task 4: Balanced RF + recall@0.5 comparison + PR-AUC
+    # --- Task 4: Balanced RF + recall@0.5 comparison + PR-AUC ---
     rf_bal = build_random_forest(X_train, y_train, class_weight="balanced")
     if rf is not None and rf_bal is not None:
         r_def = evaluate_recall_at_threshold(rf, X_test, y_test, threshold=0.5)
@@ -377,14 +457,12 @@ def main():
         print(f"\n--- PR-AUC (threshold-independent ranking quality) ---")
         print(f"  RF default:  {auc_def:.3f}")
         print(f"  RF balanced: {auc_bal:.3f}")
-        print("Note: class_weight='balanced' shifts the operating point at a fixed "
-              "threshold; it does not improve the underlying ranking (PR-AUC).")
 
-        # Task 5: PR curves + calibration curves
+        # --- Task 5: PR curves + calibration curves ---
         plot_pr_curves(rf, rf_bal, X_test, y_test, "results/pr_curves.png")
         plot_calibration_curves(rf, rf_bal, X_test, y_test, "results/calibration_curves.png")
 
-    # Task 6: Tree-vs-linear disagreement
+    # --- Task 6: Tree-vs-linear disagreement ---
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
@@ -399,6 +477,23 @@ def main():
             print(f"  |diff| = {d['prob_diff']:.3f}   true label = {d['true_label']}")
             print(f"  Feature values: {d['feature_values']}")
 
+    # --- Challenges (Tiers 1, 2, 3) ---
+    print("\n" + "="*40)
+    print("      RUNNING LAB CHALLENGES")
+    print("="*40)
+
+    # Tier 1: Threshold Tuning
+    best_t, best_f1 = run_tier1_threshold_tuning(rf_bal, X_test, y_test, "results/threshold_sweep.png")
+    print(f"Tier 1: Best F1 Score {best_f1:.3f} found at threshold {best_t:.2f}")
+
+    # Tier 2: Permutation Importance
+    run_tier2_permutation_importance(rf_bal, X_test, y_test, NUMERIC_FEATURES, "results/permutation_vs_mdi.png")
+    print("Tier 2: Permutation vs MDI comparison saved to results/")
+
+    # Tier 3: Functional Ensemble
+    ens_preds = run_tier3_simple_ensemble(rf_bal, lr, dt, X_test, X_test_scaled)
+    print("\nTier 3: Simple Ensemble (RF + LR + DT) Report:")
+    print(classification_report(y_test, ens_preds, zero_division=0))
 
 if __name__ == "__main__":
     main()
